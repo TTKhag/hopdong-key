@@ -21,3 +21,19 @@ console.log('PASS: tất cả kiểm tra đạt');
  const ff=[{ref:S[1].id,key:'HoTen',before:'Họ tên: ',original:'........',after:'',context:''},{ref:em.id,key:'DiaChi',original:'',before:'',after:'',context:''}];
  Core.execute(Core.plan(S,ff));const t2=Core.segs(pt,'docx').map(s=>s.text);
  assert(t2[0].includes('........')&&t2[1].includes('{{HoTen}}'),'chỉ thay đúng đoạn theo ref');assert(t2[3]==='{{DiaChi}}','chèn Key vào ô trống');console.log('PASS: ref + ô trống')}
+// --- Chế độ 1: dấu ba chấm, gom ngày tháng năm, theo vị trí chính xác ---
+{const x=`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`+p(r('Họ tên: ..'),r('.'),r('.....'))+p(r('Sinh ngày ... tháng ... năm ...'))+p(r('Ký ngày tháng năm'))+p(r('Căn cứ ngày 20 tháng 11 năm 2019'))+p(r('Địa chỉ: …'))+p(r('Mã: ...... Số: ......'))+'</w:body></w:document>';
+ const d3=new DOMParser().parseFromString(x,'text/xml'),pt=[{name:'x',doc:d3}],S=Core.segs(pt,'docx'),sl=Core.slots(S);
+ assert.strictEqual(sl.length,6,'6 vị trí: dấu chấm nhiều run, 2 cụm ngày, dấu …, 2 vị trí cùng đoạn; căn cứ pháp lý không có vị trí');
+ assert.deepStrictEqual(sl.filter(s=>s.kind==='date').map(s=>s.text),['ngày ... tháng ... năm ...','ngày tháng năm'],'mỗi ngày tháng năm là MỘT vị trí');
+ assert(Core.slotLines(S,sl).some(l=>l.includes('Mã: ⟦')&&l.includes('Số: ⟦')),'đánh dấu mã vị trí trong dòng gửi AI');
+ const K=['HoTen','NgaySinh','NgayKy','DiaChi','Ma','So'],ff=sl.map((x,i)=>({ref:x.ref,slot:1,st:x.st,en:x.en,key:K[i],original:x.text,before:x.before,after:x.after,context:x.ctx,on:true}));
+ Core.execute(Core.plan(S,ff));const o=Core.segs(pt,'docx').map(s=>s.text);
+ assert.deepStrictEqual(o,['Họ tên: {{HoTen}}','Sinh {{NgaySinh}}','Ký {{NgayKy}}','Căn cứ ngày 20 tháng 11 năm 2019','Địa chỉ: {{DiaChi}}','Mã: {{Ma}} Số: {{So}}']);console.log('PASS: chế độ 1')}
+// --- Khôi phục kiểu gộp ---
+{const S=(id,value)=>({id,value}),cur={files:[{id:'a'}],results:[{id:'a'}],settings:[S('keys',[{id:'k1',provider:'openai',key:'X'}]),S('activeKey','k1'),S('prompt','mine'),S('history',[{t:1,file:'f',action:'x'}])]},
+ bk={files:[{id:'a'},{id:'b'}],results:[{id:'a'},{id:'b'}],settings:[S('keys',[{id:'k1',provider:'openai',key:'X'},{id:'k1',provider:'groq',key:'Y'}]),S('activeKey','k1'),S('prompt','theirs'),S('promptDots','d'),S('history',[{t:1,file:'f',action:'x'},{t:2,file:'g',action:'y'}])]};
+ const m=Core.merge(cur,bk),g=id=>m.settings.find(x=>x.id===id)?.value;
+ assert.deepStrictEqual(m.files.map(x=>x.id),['b']);assert.deepStrictEqual(m.results.map(x=>x.id),['b']);
+ assert.strictEqual(g('keys').length,2,'key trùng bị bỏ qua, key mới được thêm với id mới');assert.notStrictEqual(g('keys')[1].id,'k1');
+ assert.strictEqual(g('prompt'),undefined,'giữ prompt hiện tại');assert.strictEqual(g('promptDots'),'d');assert.strictEqual(g('history').length,2);assert.strictEqual(g('activeKey'),undefined);console.log('PASS: gộp khi khôi phục')}
