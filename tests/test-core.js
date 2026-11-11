@@ -14,3 +14,10 @@ assert(t[3].includes('{{NgayBD}} đến ngày{{NgayKT}}'),'hai ngày khác Key')
 assert(t[4].includes('{{Luong}}')&&t[5].includes('{{Luong}}'),'một Key nhiều vị trí (bảng + thân)');
 assert(new XMLSerializer().serializeToString(d).includes('<w:b/>'),'giữ định dạng run');assert.deepStrictEqual(Core.verify(Core.segs(parts,'docx')),[]);
 console.log('PASS: tất cả kiểm tra đạt');
+// --- Thay theo mã đoạn (ref), ô bảng trống, ngữ cảnh trùng lặp ---
+{const x=`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`+p(r('Họ tên: ........'))+p(r('Họ tên: ........'))+'<w:tbl><w:tr><w:tc>'+p(r('Địa chỉ:'))+'</w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>';
+ const d2=new DOMParser().parseFromString(x,'text/xml'),pt=[{name:'x',doc:d2}],S=Core.segs(pt,'docx'),em=S.find(s=>s.empty);
+ assert(S[0].cand.includes('dấu chấm/gạch')&&em.cand.includes('ô trống'),'đánh dấu ứng viên');
+ const ff=[{ref:S[1].id,key:'HoTen',before:'Họ tên: ',original:'........',after:'',context:''},{ref:em.id,key:'DiaChi',original:'',before:'',after:'',context:''}];
+ Core.execute(Core.plan(S,ff));const t2=Core.segs(pt,'docx').map(s=>s.text);
+ assert(t2[0].includes('........')&&t2[1].includes('{{HoTen}}'),'chỉ thay đúng đoạn theo ref');assert(t2[3]==='{{DiaChi}}','chèn Key vào ô trống');console.log('PASS: ref + ô trống')}
