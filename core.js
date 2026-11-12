@@ -54,4 +54,11 @@ function merge(cur,bk){const S=(a,id)=>a.find(x=>x.id===id)?.value,has=(a,id)=>a
  const H=S(cur.settings,'history')||[],hs=new Set(H.map(h=>h.t+'|'+h.file+'|'+h.action)),add=(S(bk.settings,'history')||[]).filter(h=>!hs.has(h.t+'|'+h.file+'|'+h.action));
  if(add.length){out.added.history=add.length;out.settings.push({id:'history',value:[...H,...add].sort((a,b)=>b.t-a.t).slice(0,200)})}
  return out}
-const C={segs,lines,find,plan,execute,verify,nz,slots,slotLines,merge};g.Core=C;if(typeof module!=='undefined')module.exports=C})(typeof window!=='undefined'?window:globalThis);
+
+/* Đọc JSON từ phản hồi AI: bỏ rào Markdown, bỏ chữ thừa quanh JSON, và cứu các phần tử đã hoàn chỉnh khi JSON bị cắt giữa chừng. */
+function jparse(t){t=String(t||'').replace(/^```(?:json)?|```$/gm,'').trim();if(!t)throw new SyntaxError('Phản hồi rỗng');
+ try{return JSON.parse(t)}catch(e){const i=t.indexOf('[');if(i<0)throw e;const out=[];let d=0,s=-1,q=false,x=false;
+  for(let p=i+1;p<t.length;p++){const ch=t[p];if(q){if(x)x=false;else if(ch==='\\')x=true;else if(ch==='"')q=false;continue}
+   if(ch==='"')q=true;else if(ch==='{'){if(!d)s=p;d++}else if(ch==='}'&&d&&!--d){try{out.push(JSON.parse(t.slice(s,p+1)))}catch{}}}
+  if(!out.length)throw e;return out}}
+const C={jparse,segs,lines,find,plan,execute,verify,nz,slots,slotLines,merge};g.Core=C;if(typeof module!=='undefined')module.exports=C})(typeof window!=='undefined'?window:globalThis);
