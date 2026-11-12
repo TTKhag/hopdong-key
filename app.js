@@ -43,20 +43,25 @@ async function listModels(k){const P=PROVIDERS[k.provider],base=(k.baseUrl||P.ba
  if(P.type==='gemini'){url+='?key='+encodeURIComponent(k.key);hd={}}else if(P.type==='anthropic')hd=AH(k);else if(P.type==='cohere')url=base+'/v1/models';
  const r=await fetch(url,{headers:hd});if(!r.ok)throw new Error(`${ERR[r.status]||'Lỗi'} (HTTP ${r.status})`);const j=await r.json();
  return(j.data||j.models||[]).map(m=>(m.id||m.name||'').replace(/^models\//,'')).filter(Boolean)}
-function parseFields(t){const o=Core.jparse(t);return(Array.isArray(o)?o:o.fields||[]).map(f=>{const c=+f.confidence,S=x=>String(x||''),ty=['fixed','uncertain'].includes(f.type)?f.type:'dynamic',ref=parseInt(S(f.ref).replace(/\D/g,''));
+function jparse(t){t=String(t||'').replace(/^```(?:json)?|```$/gm,'').trim();if(!t)throw new SyntaxError('Phản hồi rỗng');
+ try{return JSON.parse(t)}catch(e){const i=t.indexOf('[');if(i<0)throw e;const out=[];let d=0,s=-1,q=false,x=false;
+  for(let p=i+1;p<t.length;p++){const ch=t[p];if(q){if(x)x=false;else if(ch==='\\')x=true;else if(ch==='"')q=false;continue}
+   if(ch==='"')q=true;else if(ch==='{'){if(!d)s=p;d++}else if(ch==='}'&&d&&!--d){try{out.push(JSON.parse(t.slice(s,p+1)))}catch{}}}
+  if(!out.length)throw e;return out}}
+function parseFields(t){const o=jparse(t);return(Array.isArray(o)?o:o.fields||[]).map(f=>{const c=+f.confidence,S=x=>String(x||''),ty=['fixed','uncertain'].includes(f.type)?f.type:'dynamic',ref=parseInt(S(f.ref).replace(/\D/g,''));
  return{ref:isNaN(ref)?null:ref,key:S(f.key).replace(/[^A-Za-z0-9_]/g,''),name:S(f.field_name),type:ty,before:S(f.before),original:S(f.original),after:S(f.after),context:S(f.context),reason:S(f.reason),confidence:isNaN(c)?1:c,on:ty==='dynamic'&&(isNaN(c)||c>=0.7)}}).filter(f=>f.ref!=null||f.original)}
 const getPrompt=async()=>(await getSet('promptV',0))===3?getSet('prompt',DEFAULT_PROMPT):DEFAULT_PROMPT;
 const keys=()=>getSet('keys',[]);
 async function activeKey(){const id=await getSet('activeKey',null);return(await keys()).find(k=>k.id===id)}
 const cleanKey=x=>String(x||'').replace(/[^A-Za-z0-9_]/g,'');
-const parseSlots=t=>{const o=Core.jparse(t);return(Array.isArray(o)?o:o.slots||[]).map(i=>({...i,slot:String(i.slot||'').replace(/[^\d.]/g,'')}))};
+const parseSlots=t=>{const o=jparse(t);return(Array.isArray(o)?o:o.slots||[]).map(i=>({...i,slot:String(i.slot||'').replace(/[^\d.]/g,'')}))};
 /* Gửi theo từng đoạn nhỏ; nếu AI trả rỗng, JSON lỗi hoặc bị cắt do hết giới hạn đầu ra thì tự chia đôi đoạn đó và gửi lại. */
 async function ask(k,ls,prompt,parse){const T={all:[],tin:0,tout:0,q:null};
  const run=async arr=>{let r,res=null;try{r=await callAI(k,prompt,arr.join('\n'));T.tin+=r.tin;T.tout+=r.tout;T.q=r.quota||T.q;res=parse(r.text)}catch(e){if(!(e instanceof SyntaxError)&&!e.empty)throw e}
   if(res&&!r?.cut){T.all.push(...res);return}
   if(arr.length>1){const h=arr.length>>1;await run(arr.slice(0,h));await run(arr.slice(h));return}
   if(res){T.all.push(...res);return}
-  throw new Error('AI trả về phản hồi rỗng hoặc không phải JSON hợp lệ. Hãy dùng model khác (tránh model "reasoning/thinking"), bấm "Kiểm tra" để thử kết nối, hoặc đổi nhà cung cấp.')};
+  throw new Error('AI trả về phản hồi rỗng hoặc không phải JSON hợp lệ. Hãy dùng model khác (tránh model "reasoning/thinking"), dùng "Kiểm tra tương thích model" trong Cấu hình AI để chọn model phù hợp.')};
  let ch=[],c=[],n=0;for(const l of ls){if(n+l.length>6000&&c.length){ch.push(c);c=[];n=0}c.push(l);n+=l.length}if(c.length)ch.push(c);
  for(const x of ch)await run(x);return{all:T.all,tin:T.tin,tout:T.tout,q:T.q}}
 function coverage(rec,S){const refs=new Set(rec.analysis.map(f=>f.ref));rec.cand=S.filter(s=>s.cand.length).length;rec.uncov=S.filter(s=>!refs.has(s.id)&&s.cand.some(c=>c!=='sau dấu hai chấm')).map(s=>({id:s.id,where:s.where,text:s.text.trim().slice(0,100)}))}
@@ -166,6 +171,13 @@ async function restore(){const f=$('#rf').files[0];if(!f)return toast('Chọn fi
    o.files.forEach(x=>t.objectStore('files').put(x));o.results.forEach(x=>t.objectStore('results').put(x));o.settings.forEach(x=>t.objectStore('settings').put(x));await txDone(t);
    toast(`Đã gộp: thêm ${o.files.length} file gốc, ${o.results.length} file mẫu, ${o.added.keys} API Key, ${o.added.history} mục lịch sử. Các mục trùng được bỏ qua.`);library()})}
  catch(e){toast('Khôi phục thất bại, dữ liệu hiện tại được giữ nguyên: '+e.message,1)}}
+const NOCHAT=/whisper|tts|embed|guard|moderation|image|dall|rerank|audio|transcri|speech|imagen|veo|sora|aqa|bison|gecko/i;
+const PROBE_SYS='Bạn nhận các dòng "P<số> | vị trí | nội dung" có mã vị trí dạng ⟦số.số⟧. Chỉ trả về JSON hợp lệ, không Markdown, theo dạng {"slots":[{"slot":"1.1","key":"TenKey","field_name":"...","reason":"...","confidence":0.9}]}, mỗi mã vị trí một phần tử, key PascalCase tiếng Việt không dấu.';
+async function probe(k,model){const t0=Date.now();try{const r=await callAI({...k,model},PROBE_SYS,'P1 | Thân | Họ tên nhân viên: ⟦1.1⟧ Sinh ngày: ⟦1.2⟧',{tries:1});
+ if(r.cut)return{ok:false,why:'Phản hồi bị cắt do giới hạn đầu ra'};let o;try{o=parseSlots(r.text)}catch{return{ok:false,why:r.text.trim()?'Không trả về JSON hợp lệ':'Phản hồi rỗng (thường gặp ở model reasoning)'}}
+ return['1.1','1.2'].every(x=>o.some(i=>i.slot===x&&cleanKey(i.key)))?{ok:true,ms:Date.now()-t0}:{ok:false,why:'JSON thiếu vị trí hoặc key'}}
+ catch(e){return/HTTP 429/.test(e.message)?{ok:null,why:'Bị giới hạn tốc độ, hãy thử lại sau'}:{ok:false,why:e.message.slice(0,120)}}}
+const cb=k=>{const c=k.compat?.[k.model];return c?(c.ok?'<span class=ok>✓ tương thích</span>':c.ok===false?'<span class=err>✗ không tương thích</span>':''):''};
 const tm=ts=>{const d=new Date(ts);return d.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'})+(d.toDateString()===new Date().toDateString()?'':' '+d.toLocaleDateString('vi-VN'))};
 const qInfo=k=>{const q=k.q;return(q?`<span class=ok>[API]</span> Đã sử dụng ${q.used}% token<br>${q.resetAt?(q.resetAt>Date.now()?`Token hồi đầy lúc ${tm(q.resetAt)}`:'Mốc hồi token theo API đã qua – hãy kiểm tra lại'):'Thời điểm hồi token: chưa có dữ liệu'} <span class=muted>(cập nhật ${tm(q.at)})</span>`:'<span class=muted>Mức dùng và thời điểm hồi token: chưa có dữ liệu từ nhà cung cấp</span>')+`<br><span class=muted>[Hệ thống] Đã dùng qua ứng dụng: ${k.used||0} token (tự cộng dồn, không phải hạn mức)</span>`};
 async function aiPage(){$('#main').innerHTML=`<h2>Cấu hình AI</h2><div class=tabs><a data-t=keys class="${tab==='keys'?'on':''}">API Key</a><a data-t=prompt class="${tab==='prompt'?'on':''}">Prompt</a></div><div id=tb></div>`;
@@ -176,20 +188,37 @@ async function aiPage(){$('#main').innerHTML=`<h2>Cấu hình AI</h2><div class=
   $('#pr').onclick=async()=>{if(+$('#pm').value===1)await setSet('promptDots',DEFAULT_PROMPT_DOTS);else{await setSet('prompt',DEFAULT_PROMPT);await setSet('promptV',3)}await ld();toast('Đã khôi phục mặc định.')};return}
  const ks=await keys(),act=await getSet('activeKey',null);
  $('#tb').innerHTML=`<div class=warn><b>Cảnh báo bảo mật:</b> API Key được lưu dạng văn bản thường trong IndexedDB của trình duyệt này và nằm trong file sao lưu. Không dùng trên máy công cộng; nên dùng key có hạn mức thấp và thu hồi khi không cần.</div>
- <div class=card>${ks.map(k=>`<div class=kr><div><span class="bd${k.id===act?' on':''}">● Đang dùng</span><b class=kn>${esc(k.name)}</b><div class=muted>${esc(PROVIDERS[k.provider]?.name||k.provider)} / ${esc(k.model)} · ${esc(k.key.slice(0,4))}••••${esc(k.key.slice(-3))}</div><div class=kq>${qInfo(k)}</div></div><div class=act><button data-a=use data-id=${k.id} ${k.id===act?'disabled':''}>Dùng</button><button data-a=test data-id=${k.id}>Kiểm tra</button><button data-a=ed data-id=${k.id}>Sửa</button><button class=del data-a=rm data-id=${k.id}>Xóa</button></div></div>`).join('')||'<p class=muted>Chưa có API Key.</p>'}</div>
+ <div class=card>${ks.map(k=>`<div class=kr><div><span class="bd${k.id===act?' on':''}">● Đang dùng</span><b class=kn>${esc(k.name)}</b><div class=muted>${esc(PROVIDERS[k.provider]?.name||k.provider)} / ${esc(k.model)} ${cb(k)} · ${esc(k.key.slice(0,4))}••••${esc(k.key.slice(-3))}</div><div class=kq>${qInfo(k)}</div></div><div class=act><button data-a=use data-id=${k.id} ${k.id===act?'disabled':''}>Dùng</button><button data-a=test data-id=${k.id}>Kiểm tra</button><button data-a=ed data-id=${k.id}>Sửa</button><button class=del data-a=rm data-id=${k.id}>Xóa</button></div></div>`).join('')||'<p class=muted>Chưa có API Key.</p>'}</div>
  <div class=card><h3 id=fh>Thêm API Key</h3><input type=hidden id=kid><div class=row><input id=kn placeholder="Tên gợi nhớ (vd: Gemini free #1)"><select id=kp>${Object.entries(PROVIDERS).map(([i,p])=>`<option value=${i}>${p.name}</option>`).join('')}</select><input id=km list=ml placeholder="Model ID" size=28><datalist id=ml></datalist></div>
- <div class=row><input id=kk type=password placeholder="API Key" size=48></div><div class=row><button class=pri id=sv>Lưu</button><button id=tk>Kiểm tra kết nối</button><button id=lm>Tải danh sách model</button></div></div>`;
+ <div class=row><input id=kk type=password placeholder="API Key" size=48></div><div class=row><button class=pri id=sv>Lưu</button><button id=tk>Kiểm tra kết nối</button><button id=lm>Tải danh sách model</button><button id=cm>Kiểm tra tương thích model</button></div><div id=cp></div></div>`;
  const fk=()=>({id:$('#kid').value||crypto.randomUUID(),name:$('#kn').value.trim(),provider:$('#kp').value,model:$('#km').value.trim(),key:$('#kk').value.trim()});
- const sync=()=>{$('#ml').innerHTML=PROVIDERS[$('#kp').value].models.map(m=>`<option value="${m}">`).join('')};$('#kp').onchange=sync;sync();
+ const sync=()=>{$('#ml').innerHTML=PROVIDERS[$('#kp').value].models.map(m=>`<option value="${m}">`).join('')};$('#kp').onchange=()=>{cmp={};$('#cp').innerHTML='';sync()};sync();
  const test=async(k,save)=>{if(!k.key||!k.model)return toast('Cần nhập model và API Key để kiểm tra.',1);try{toast('Đang kiểm tra '+(k.name||k.provider)+'…');const r=await callAI(k,'Trả lời đúng một từ: OK','Kiểm tra kết nối',{tries:1,json:false});
   toast('Kết nối thành công. Phản hồi: '+r.text.slice(0,40)+(r.quota?'':' (nhà cung cấp không trả dữ liệu token)'));if(save&&r.quota){const a=await keys(),x=a.find(y=>y.id===k.id);x.q=r.quota;await setSet('keys',a);aiPage()}}catch(e){toast(e.message,1)}};
+ let cmp={};const slp=n=>new Promise(r=>setTimeout(r,n));
+ $('#cm').onclick=async()=>{const k=fk();if(!k.key)return toast('Nhập API Key trước.',1);let ms;
+  try{toast('Đang tải danh sách model…');ms=(await listModels(k)).filter(m=>!NOCHAT.test(m)).sort()}catch(e){return toast(e.message,1)}
+  if(!ms.length)return toast('Nhà cung cấp không trả danh sách model.',1);
+  const sel=new Set(ms.length<=20?ms:[]);let run=false,stop=false;
+  const st=m=>{const c=cmp[m];return!c?'<span class=muted>chưa kiểm tra</span>':c.ok?`<span class=ok>✓ Tương thích (${(c.ms/1000).toFixed(1)}s)</span>`:c.ok===false?`<span class=err>✗ ${esc(c.why)}</span>`:`<span class=muted>⏳ ${esc(c.why)}</span>`};
+  const draw=()=>{const q=($('#cf')?.value||'').toLowerCase();$('#cp').innerHTML=`<div class=card style="margin-top:10px"><b>Tương thích model (${ms.length} model chat)</b><p class=muted>Mỗi model được thử bằng một yêu cầu nhỏ giống cách ứng dụng dùng (khoảng 200 token). Model đạt khi trả đúng JSON. Danh sách trên 20 model mặc định chưa chọn sẵn để tránh tốn quota.</p><div class=row><input id=cf placeholder="Lọc tên model" value="${esc(q)}"><button id=ca>Chọn tất cả đang lọc</button><button id=cn>Bỏ chọn</button><button class=pri id=cr>Kiểm tra các model đã chọn</button><button id=cs>Dừng</button></div><table>${ms.filter(m=>m.toLowerCase().includes(q)).map(m=>`<tr><td><input type=checkbox data-m="${esc(m)}" ${sel.has(m)?'checked':''}></td><td>${esc(m)}</td><td data-s="${esc(m)}">${st(m)}</td><td><button data-u="${esc(m)}">Chọn</button></td></tr>`).join('')}</table></div>`};
+  draw();
+  $('#cp').onchange=e=>{const t=e.target;if(t.dataset.m!=null)t.checked?sel.add(t.dataset.m):sel.delete(t.dataset.m);if(t.id==='cf')draw()};
+  $('#cp').onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+   if(b.dataset.u){$('#km').value=b.dataset.u;return toast('Đã chọn model '+b.dataset.u+'. Bấm Lưu để lưu vào API Key.')}
+   if(b.id==='ca'){const q=$('#cf').value.toLowerCase();ms.filter(m=>m.toLowerCase().includes(q)).forEach(m=>sel.add(m));draw()}
+   if(b.id==='cn'){sel.clear();draw()}if(b.id==='cs')stop=true;
+   if(b.id==='cr'&&!run){const todo=ms.filter(m=>sel.has(m));if(!todo.length)return toast('Chưa chọn model nào.',1);run=true;stop=false;
+    for(const m of todo){if(stop)break;const c=document.querySelector(`[data-s="${CSS.escape(m)}"]`);if(c)c.innerHTML='<span class=muted>đang thử…</span>';
+     let r=await probe(fk(),m);if(r.ok===null&&!stop){await slp(4000);r=await probe(fk(),m)}cmp[m]={...r,at:Date.now()};if(c)c.innerHTML=st(m);await slp(500)}
+    run=false;const id=$('#kid').value;if(id){const a=await keys(),x=a.find(y=>y.id===id);if(x){x.compat=cmp;await setSet('keys',a)}}toast(stop?'Đã dừng.':'Đã kiểm tra xong. Chọn model ✓ rồi bấm Lưu.')}}};
  $('#tk').onclick=()=>test(fk());
  $('#lm').onclick=async()=>{const k=fk();if(!k.key)return toast('Nhập API Key trước.',1);try{const m=await listModels(k);$('#ml').innerHTML=m.map(x=>`<option value="${esc(x)}">`).join('');toast(`Đã tải ${m.length} model. Nhấn vào ô Model để chọn.`)}catch(e){toast(e.message,1)}};
  $('#tb').onclick=async e=>{const b=e.target.closest('button[data-a]');if(!b)return;const id=b.dataset.id,k=ks.find(x=>x.id===id);
   if(b.dataset.a==='use'){await setSet('activeKey',id);aiPage()}else if(b.dataset.a==='test')test(k,true);else if(b.dataset.a==='rm'){if(confirm('Xóa API Key này?')){await setSet('keys',ks.filter(x=>x.id!==id));if(act===id)await setSet('activeKey',null);aiPage()}}
-  else{$('#fh').textContent='Sửa API Key';$('#kid').value=id;$('#kn').value=k.name;$('#kp').value=k.provider;sync();$('#km').value=k.model;$('#kk').value=k.key;$('#fh').scrollIntoView()}};
- $('#sv').onclick=async()=>{const o=fk();if(!o.name||!o.model||!o.key)return toast('Cần nhập tên, model và API Key.',1);const i=ks.findIndex(k=>k.id===o.id);if(i>=0)ks[i]={...ks[i],...o};else ks.push(o);await setSet('keys',ks);if(!act)await setSet('activeKey',o.id);toast('Đã lưu API Key.');aiPage()}}
+  else{$('#fh').textContent='Sửa API Key';$('#kid').value=id;$('#kn').value=k.name;$('#kp').value=k.provider;sync();$('#km').value=k.model;$('#kk').value=k.key;cmp=k.compat||{};$('#cp').innerHTML='';$('#fh').scrollIntoView()}};
+ $('#sv').onclick=async()=>{const o={...fk(),compat:cmp};if(!o.name||!o.model||!o.key)return toast('Cần nhập tên, model và API Key.',1);const i=ks.findIndex(k=>k.id===o.id);if(i>=0)ks[i]={...ks[i],...o};else ks.push(o);await setSet('keys',ks);if(!act)await setSet('activeKey',o.id);toast('Đã lưu API Key.');aiPage()}}
 const PAGES={home,process:processPage,library,ai:aiPage};
 const route=()=>{const m=$('#main');m.onclick=m.oninput=m.onchange=null;const p=(location.hash||'#home').slice(1);document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.p===p));(PAGES[p]||home)()};
 addEventListener('hashchange',route);
-openDB().then(d=>{db=d;route()}).catch(e=>{$('#main').innerHTML='<div class=warn>Không mở được IndexedDB: '+esc(e.message)+'</div>'});
+openDB().then(d=>{db=d;if(!Core.slots||!Core.merge)toast('core.js chưa phải bản mới nhất – hãy chép đè core.js, rồi nhấn Ctrl+F5.',1);route()}).catch(e=>{$('#main').innerHTML='<div class=warn>Không mở được IndexedDB: '+esc(e.message)+'</div>'});
