@@ -32,7 +32,8 @@ async function callAI(k,prompt,text,o={}){const P=PROVIDERS[k.provider]||PROVIDE
   if(P.type==='cohere'){url=base+'/v2/chat';pick=j=>[j.message?.content?.map(c=>c.text||'').join('')||'',j.usage?.tokens?.input_tokens||0,j.usage?.tokens?.output_tokens||0]}
   else{url=base+'/chat/completions';pick=j=>[j.choices?.[0]?.message?.content||'',j.usage?.prompt_tokens||0,j.usage?.completion_tokens||0]}}
  let err;for(let a=1;a<=(o.tries||3);a++){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...hd},body:JSON.stringify(body)});
-  if(r.ok){const[t,tin,tout]=pick(await r.json());return{text:t,tin,tout,quota:quota(r.headers)}}
+  if(r.ok){const raw=await r.text();let j;try{j=JSON.parse(raw)}catch{err=Object.assign(new Error('API trả về phản hồi rỗng hoặc không hợp lệ'+(raw?': '+raw.slice(0,120):'')),{empty:1});await new Promise(s=>setTimeout(s,1000));continue}
+  const[t,tin,tout]=pick(j),cut=[j.choices?.[0]?.finish_reason==='length',j.candidates?.[0]?.finishReason==='MAX_TOKENS',j.stop_reason==='max_tokens',j.finish_reason==='MAX_TOKENS'].some(Boolean);return{text:t,tin,tout,cut,quota:quota(r.headers)}}
   const tx=await r.text();if(r.status===400&&body.response_format){delete body.response_format;a--;continue}
   err=Object.assign(new Error(`${ERR[r.status]||'Lỗi API'} (HTTP ${r.status}): ${tx.slice(0,200)}`),{fatal:r.status!==429&&r.status<500});if(err.fatal)throw err}
   catch(e){if(e.fatal)throw e;err=err||(e instanceof TypeError?new Error('Lỗi kết nối hoặc bị chặn CORS: '+e.message):e)}
@@ -42,15 +43,22 @@ async function listModels(k){const P=PROVIDERS[k.provider],base=(k.baseUrl||P.ba
  if(P.type==='gemini'){url+='?key='+encodeURIComponent(k.key);hd={}}else if(P.type==='anthropic')hd=AH(k);else if(P.type==='cohere')url=base+'/v1/models';
  const r=await fetch(url,{headers:hd});if(!r.ok)throw new Error(`${ERR[r.status]||'Lỗi'} (HTTP ${r.status})`);const j=await r.json();
  return(j.data||j.models||[]).map(m=>(m.id||m.name||'').replace(/^models\//,'')).filter(Boolean)}
-function parseFields(t){const o=JSON.parse(t.replace(/^```(?:json)?|```$/gm,'').trim());return(Array.isArray(o)?o:o.fields||[]).map(f=>{const c=+f.confidence,S=x=>String(x||''),ty=['fixed','uncertain'].includes(f.type)?f.type:'dynamic',ref=parseInt(S(f.ref).replace(/\D/g,''));
+function parseFields(t){const o=Core.jparse(t);return(Array.isArray(o)?o:o.fields||[]).map(f=>{const c=+f.confidence,S=x=>String(x||''),ty=['fixed','uncertain'].includes(f.type)?f.type:'dynamic',ref=parseInt(S(f.ref).replace(/\D/g,''));
  return{ref:isNaN(ref)?null:ref,key:S(f.key).replace(/[^A-Za-z0-9_]/g,''),name:S(f.field_name),type:ty,before:S(f.before),original:S(f.original),after:S(f.after),context:S(f.context),reason:S(f.reason),confidence:isNaN(c)?1:c,on:ty==='dynamic'&&(isNaN(c)||c>=0.7)}}).filter(f=>f.ref!=null||f.original)}
 const getPrompt=async()=>(await getSet('promptV',0))===3?getSet('prompt',DEFAULT_PROMPT):DEFAULT_PROMPT;
 const keys=()=>getSet('keys',[]);
 async function activeKey(){const id=await getSet('activeKey',null);return(await keys()).find(k=>k.id===id)}
 const cleanKey=x=>String(x||'').replace(/[^A-Za-z0-9_]/g,'');
-const parseSlots=t=>{const o=JSON.parse(t.replace(/^```(?:json)?|```$/gm,'').trim());return(Array.isArray(o)?o:o.slots||[]).map(i=>({...i,slot:String(i.slot||'').replace(/[^\d.]/g,'')}))};
-async function ask(k,ls,prompt,parse){const ch=[];let all=[],tin=0,tout=0,q=null,c='';for(const l of ls){if(c.length+l.length>12000&&c){ch.push(c);c=''}c+=l+'\n'}if(c)ch.push(c);
- for(const x of ch){const r=await callAI(k,prompt,x);all.push(...parse(r.text));tin+=r.tin;tout+=r.tout;q=r.quota||q}return{all,tin,tout,q}}
+const parseSlots=t=>{const o=Core.jparse(t);return(Array.isArray(o)?o:o.slots||[]).map(i=>({...i,slot:String(i.slot||'').replace(/[^\d.]/g,'')}))};
+/* Gửi theo từng đoạn nhỏ; nếu AI trả rỗng, JSON lỗi hoặc bị cắt do hết giới hạn đầu ra thì tự chia đôi đoạn đó và gửi lại. */
+async function ask(k,ls,prompt,parse){const T={all:[],tin:0,tout:0,q:null};
+ const run=async arr=>{let r,res=null;try{r=await callAI(k,prompt,arr.join('\n'));T.tin+=r.tin;T.tout+=r.tout;T.q=r.quota||T.q;res=parse(r.text)}catch(e){if(!(e instanceof SyntaxError)&&!e.empty)throw e}
+  if(res&&!r?.cut){T.all.push(...res);return}
+  if(arr.length>1){const h=arr.length>>1;await run(arr.slice(0,h));await run(arr.slice(h));return}
+  if(res){T.all.push(...res);return}
+  throw new Error('AI trả về phản hồi rỗng hoặc không phải JSON hợp lệ. Hãy dùng model khác (tránh model "reasoning/thinking"), bấm "Kiểm tra" để thử kết nối, hoặc đổi nhà cung cấp.')};
+ let ch=[],c=[],n=0;for(const l of ls){if(n+l.length>6000&&c.length){ch.push(c);c=[];n=0}c.push(l);n+=l.length}if(c.length)ch.push(c);
+ for(const x of ch)await run(x);return{all:T.all,tin:T.tin,tout:T.tout,q:T.q}}
 function coverage(rec,S){const refs=new Set(rec.analysis.map(f=>f.ref));rec.cand=S.filter(s=>s.cand.length).length;rec.uncov=S.filter(s=>!refs.has(s.id)&&s.cand.some(c=>c!=='sau dấu hai chấm')).map(s=>({id:s.id,where:s.where,text:s.text.trim().slice(0,100)}))}
 async function account(k,rec,r,act){const u=rec.usage||{tin:0,tout:0};u.tin+=r.tin;u.tout+=r.tout;u.cost=k.pin||k.pout?(u.tin*(k.pin||0)+u.tout*(k.pout||0))/1e6:null;rec.usage=u;await dbPut('files',rec);
  const ks=await keys(),kk=ks.find(x=>x.id===k.id);kk.used=(kk.used||0)+r.tin+r.tout;if(r.q)kk.q=r.q;await setSet('keys',ks);await log({t:Date.now(),file:rec.name,action:act+' ('+k.name+')',mode:rec.mode||2,st:'Thành công',tin:r.tin,tout:r.tout,cost:u.cost,n:rec.analysis.length})}
