@@ -37,3 +37,8 @@ console.log('PASS: tất cả kiểm tra đạt');
  assert.deepStrictEqual(m.files.map(x=>x.id),['b']);assert.deepStrictEqual(m.results.map(x=>x.id),['b']);
  assert.strictEqual(g('keys').length,2,'key trùng bị bỏ qua, key mới được thêm với id mới');assert.notStrictEqual(g('keys')[1].id,'k1');
  assert.strictEqual(g('prompt'),undefined,'giữ prompt hiện tại');assert.strictEqual(g('promptDots'),'d');assert.strictEqual(g('history').length,2);assert.strictEqual(g('activeKey'),undefined);console.log('PASS: gộp khi khôi phục')}
+// --- Đọc JSON AI: rào Markdown, chữ thừa, bị cắt giữa chừng, rỗng ---
+{assert.strictEqual(Core.jparse('```json\n{"fields":[]}\n```').fields.length,0);
+ assert.strictEqual(Core.jparse('{"fields":[{"key":"A","original":"x"},{"key":"B","orig').length,1,'cứu phần tử hoàn chỉnh khi bị cắt');
+ assert.strictEqual(Core.jparse('Đây là kết quả: [{"a":"}"},{"a":2}] hết').length,2);
+ assert.throws(()=>Core.jparse(''),SyntaxError);assert.throws(()=>Core.jparse('{"fields":['),SyntaxError);console.log('PASS: đọc JSON AI')}
