@@ -42,3 +42,9 @@ console.log('PASS: tất cả kiểm tra đạt');
  assert.strictEqual(Core.jparse('{"fields":[{"key":"A","original":"x"},{"key":"B","orig').length,1,'cứu phần tử hoàn chỉnh khi bị cắt');
  assert.strictEqual(Core.jparse('Đây là kết quả: [{"a":"}"},{"a":2}] hết').length,2);
  assert.throws(()=>Core.jparse(''),SyntaxError);assert.throws(()=>Core.jparse('{"fields":['),SyntaxError);console.log('PASS: đọc JSON AI')}
+// --- Tô nền vàng chỉ phần {{Key}}, không đổi chữ ---
+{const x=`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`+p(r('Họ tên: {{HoTen}} / Số: {{So}} hết',1))+p(r('{{NgaySinh}}'))+'</w:body></w:document>';
+ const d4=new DOMParser().parseFromString(x,'text/xml'),pt=[{name:'x',doc:d4}],before=Core.segs(pt,'docx').map(s=>s.text);
+ const n=Core.highlight(pt,k=>k!=='So'),out=new XMLSerializer().serializeToString(d4);
+ assert.deepStrictEqual(Core.segs(pt,'docx').map(s=>s.text),before,'nội dung không đổi');assert.strictEqual((out.match(/<w:highlight/g)||[]).length,2,'chỉ 2 Key được tô (HoTen, NgaySinh)');
+ assert(!/highlight[^>]*>[^]*?Họ tên:/.test(out.split('{{HoTen}}')[0]),'nhãn không bị tô');assert(out.includes('<w:b/>'),'giữ định dạng đậm');console.log('PASS: tô nền Key')}
